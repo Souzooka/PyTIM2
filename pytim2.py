@@ -12,4 +12,5 @@ except OSError:
 
 tim2 = TIM2.from_file(tim2_file)
 
+tim2_file.close()
 pass

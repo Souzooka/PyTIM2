@@ -106,6 +106,7 @@ class TIM2ImageHeader:
     picture_format: int
     # 11 (1 byte)
     num_mipmaps: int
+    """Number of mipmaps (NOTE: This includes the main image, so main image + no other mipmaps is 1)"""
     # 12 (1 byte)
     palette_type: TIM2PaletteType
     # 13 (1 byte)
@@ -130,7 +131,56 @@ class TIM2ImageHeader:
 
         header = cls()
 
-        header.image_size = 0
+        f.seek(pos + 0x0)
+        header.image_size = struct.unpack("<I", f.read(4))[0]
+
+        f.seek(pos + 0x4)
+        header.palette_size = struct.unpack("<I", f.read(4))[0]
+
+        f.seek(pos + 0x8)
+        header.image_data_size = struct.unpack("<I", f.read(4))[0]
+
+        f.seek(pos + 0xC)
+        header.image_header_size = struct.unpack("<H", f.read(2))[0]
+
+        f.seek(pos + 0xE)
+        header.num_palette_colors = struct.unpack("<H", f.read(2))[0]
+
+        f.seek(pos + 0x10)
+        header.picture_format = struct.unpack("<B", f.read(1))[0]
+
+        f.seek(pos + 0x11)
+        header.num_mipmaps = struct.unpack("<B", f.read(1))[0]
+
+        f.seek(pos + 0x12)
+        palette_type: int = struct.unpack("<B", f.read(1))[0]
+        if palette_type not in TIM2PaletteType:
+            raise RuntimeError(f"Unknown palette type: {palette_type}")
+        header.palette_type = TIM2PaletteType(palette_type)
+
+        f.seek(pos + 0x13)
+        image_type: int = struct.unpack("<B", f.read(1))[0]
+        if image_type not in TIM2ImageType:
+            raise RuntimeError(f"Unknown image type: {image_type}")
+        header.image_type = TIM2ImageType(image_type)
+
+        f.seek(pos + 0x14)
+        header.image_width = struct.unpack("<H", f.read(2))[0]
+
+        f.seek(pos + 0x16)
+        header.image_height = struct.unpack("<H", f.read(2))[0]
+
+        f.seek(pos + 0x18)
+        header.gs_tex0_register_data = struct.unpack("<Q", f.read(8))[0]
+
+        f.seek(pos + 0x20)
+        header.gs_tex1_register_data = struct.unpack("<Q", f.read(8))[0]
+
+        f.seek(pos + 0x28)
+        header.gs_tex_afbapabe_data = struct.unpack("<I", f.read(4))[0]
+
+        f.seek(pos + 0x2C)
+        header.gs_texclut_register_data = struct.unpack("<I", f.read(4))[0]
 
         f.seek(pos)
         
@@ -149,6 +199,12 @@ class TIM2Image:
 
         image = cls()
         image.header = TIM2ImageHeader.from_file(f)
+
+        image.mipmaps = []
+
+        f.seek(image.header.image_header_size, os.SEEK_CUR)
+        image.image_data = f.read(image.header.image_data_size)
+        image.palette_data = f.read(image.header.palette_size)
 
         f.seek(pos)
         

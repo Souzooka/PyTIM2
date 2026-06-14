@@ -206,9 +206,58 @@ class TIM2Image:
         image.image_data = f.read(image.header.image_data_size)
         image.palette_data = f.read(image.header.palette_size)
 
+        image.validate_image_size()
+        image.validate_palette_size()
+
         f.seek(pos)
         
         return image
+    
+    def validate_image_size(self):
+        expected = 0
+        actual = self.header.image_data_size
+        pixels = self.header.image_width * self.header.image_height
+
+        match self.header.image_type:
+            case TIM2ImageType.TIM2_IDTEX4:
+                # 2 pixels/byte
+                expected = pixels / 2
+            case TIM2ImageType.TIM2_IDTEX8:
+                # 1 byte/pixel
+                expected = pixels
+            case TIM2ImageType.TIM2_RGB16:
+                # 2 bytes/pixel
+                expected = pixels * 2
+            case TIM2ImageType.TIM2_RGB24:
+                # 3 bytes/pixel
+                expected = pixels * 3
+            case TIM2ImageType.TIM2_RGB32:
+                # 4 bytes/pixel
+                expected = pixels * 4
+
+        assert actual == expected, f"Image size mismatch (expected bytes={expected}, actual bytes={actual})"
+
+    def validate_palette_size(self):
+        expected = 0
+        actual = self.header.palette_size
+        colors = self.header.num_palette_colors
+
+        if self.header.image_type not in (TIM2ImageType.TIM2_IDTEX4, TIM2ImageType.TIM2_IDTEX8):
+            assert self.header.palette_type is TIM2PaletteType.PAL_NONE, "Non-indexed image has palette"
+            return
+        
+        match self.header.palette_type:
+            case TIM2PaletteType.PAL_RGB16_CSM1 | TIM2PaletteType.PAL_RGB16_CSM2:
+                # 2 bytes/color
+                expected = colors * 2
+            case TIM2PaletteType.PAL_RGB32_CSM1 | TIM2PaletteType.PAL_RGB32_CSM2:
+                # 4 bytes/color
+                expected = colors * 4
+            case _:
+                pass
+
+        assert actual == expected, f"Palette size mismatch (expected bytes={expected}, actual bytes={actual})"
+
 
 @unique
 class TIM2ImageType(IntEnum):

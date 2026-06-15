@@ -213,6 +213,14 @@ class TIM2Image:
         
         return image
     
+    @property
+    def width(self) -> int:
+        return self.header.image_width
+    
+    @property
+    def height(self) -> int:
+        return self.header.image_height
+    
     def validate_image_size(self):
         expected = 0
         actual = self.header.image_data_size
@@ -258,6 +266,75 @@ class TIM2Image:
 
         assert actual == expected, f"Palette size mismatch (expected bytes={expected}, actual bytes={actual})"
 
+    def get_normalized_image(self) -> list[int]:
+        image: list[int] = []
+        palette = self.__get_normalized_palette()
+
+        match self.header.image_type:
+            case TIM2ImageType.TIM2_RGB16:
+                raise NotImplementedError()
+            case TIM2ImageType.TIM2_RGB24:
+                raise NotImplementedError()
+            case TIM2ImageType.TIM2_RGB32:
+                image = list(struct.unpack(f"<{len(self.image_data)}B", self.image_data))
+            case TIM2ImageType.TIM2_IDTEX4:
+                raise NotImplementedError()
+            case TIM2ImageType.TIM2_IDTEX8:
+                for index in self.image_data:
+                    for i in range(4):
+                        color = (palette[index] >> (i * 8)) & 0xFF
+                        image.append(color)
+        
+        return image
+
+    def __get_normalized_palette(self) -> list[int]:
+        """
+        Returns a 32-bit color palette for this image. If the image has no palette, this returns an empty sequence of bytes.
+        """
+        palette: list[int] = []
+
+        def convert16_to_32(color: int) -> int:
+            r = color & 0x1F
+            color >>= 5
+            g = color & 0x1F
+            color >>= 5
+            b = color & 0x1F
+            color >>= 5
+            a = color & 1
+            
+            color = \
+                ((a * 128) << 24) | \
+                ((b * 8) << 16) | \
+                ((g * 8) << 8) | \
+                ((r * 8))
+            
+            return color
+        
+        match self.header.palette_type:
+            case TIM2PaletteType.PAL_NONE:
+                pass
+            case TIM2PaletteType.PAL_RGB16_CSM1:
+                # (16-bit palette, swizzled)
+                raise NotImplementedError()
+            case TIM2PaletteType.PAL_RGB32_CSM1:
+                # (32-bit palette, swizzled)
+                #raise NotImplementedError()
+                # TEST pending implementation
+                palette = list(struct.unpack(f"<{len(self.palette_data) // 4}I", self.palette_data))
+            case TIM2PaletteType.PAL_RGB16_CSM2:
+                # (16-bit palette, linear)
+                palette = [convert16_to_32(color) for color in struct.unpack(f"<{len(self.palette_data) // 2}H", self.palette_data)]
+            case TIM2PaletteType.PAL_RGB32_CSM2:
+                # (32-bit palette, linear)
+                palette = list(struct.unpack(f"<{len(self.palette_data) // 4}I", self.palette_data))
+
+        # Convert PS2 alpha (0x0-0x80) to 0x0-0xFF
+        for i in range(len(palette)):
+            a = palette[i] >> 24
+            a = min(a * 2, 0xFF)
+            palette[i] |= a << 24
+        
+        return palette
 
 @unique
 class TIM2ImageType(IntEnum):

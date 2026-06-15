@@ -272,10 +272,25 @@ class TIM2Image:
 
         match self.header.image_type:
             case TIM2ImageType.TIM2_RGB16:
-                raise NotImplementedError()
+                # UNTESTED
+                for i in range(0, len(self.image_data), 2):
+                    rgba = self.image_data[i] | (self.image_data[i + 1] << 8)
+                    r = rgba & 0x1F
+                    rgba >>= 5
+                    g = rgba & 0x1F
+                    rgba >>= 5
+                    b = rgba & 0x1F
+                    rgba >>= 5
+                    a = rgba & 1
+                    image.extend([r * 8, g * 8, b * 8, a * 128])
             case TIM2ImageType.TIM2_RGB24:
-                raise NotImplementedError()
+                # UNTESTED
+                for i in range(0, len(self.image_data), 3):
+                    for j in range(i, i + 3):
+                        image.append(self.image_data[j])
+                    image.append(128) # Alpha = 0x80
             case TIM2ImageType.TIM2_RGB32:
+                # UNTESTED
                 image = list(struct.unpack(f"<{len(self.image_data)}B", self.image_data))
             case TIM2ImageType.TIM2_IDTEX4:
                 for byte in self.image_data:
@@ -289,12 +304,24 @@ class TIM2Image:
                     for i in range(4):
                         color = (palette[index] >> (i * 8)) & 0xFF
                         image.append(color)
-        
+
+        # Convert PS2 alpha (0x0-0x80) to 0x0-0xFF
+        for i in range(3, len(image), 4):
+            a = image[i]
+            a = min(a * 2, 0xFF)
+            image[i] = a
+
         return image
     
     def __unswizzle_palette32(self) -> list[int]:
         palette = list(struct.unpack(f"<{len(self.palette_data) // 4}I", self.palette_data))
-
+        return self.__unswizzle_palette(palette)
+    
+    def __unswizzle_palette16(self) -> list[int]:
+        palette = list(struct.unpack(f"<{len(self.palette_data) // 2}H", self.palette_data))
+        return self.__unswizzle_palette(palette)
+    
+    def __unswizzle_palette(self, palette: list[int]) -> list[int]:
         if self.header.image_type is TIM2ImageType.TIM2_IDTEX4:
             # The palette is effectively already linear
             return palette
@@ -341,27 +368,23 @@ class TIM2Image:
         
         match self.header.palette_type:
             case TIM2PaletteType.PAL_NONE:
+                # UNTESTED
                 pass
             case TIM2PaletteType.PAL_RGB16_CSM1:
+                # UNTESTED
                 # (16-bit palette, swizzled)
-                raise NotImplementedError()
+                palette = [convert16_to_32(color) for color in self.__unswizzle_palette16()]
             case TIM2PaletteType.PAL_RGB32_CSM1:
                 # (32-bit palette, swizzled)
-                #raise NotImplementedError()
-                # TEST pending implementation
                 palette = self.__unswizzle_palette32()
             case TIM2PaletteType.PAL_RGB16_CSM2:
+                # UNTESTED
                 # (16-bit palette, linear)
                 palette = [convert16_to_32(color) for color in struct.unpack(f"<{len(self.palette_data) // 2}H", self.palette_data)]
             case TIM2PaletteType.PAL_RGB32_CSM2:
+                # UNTESTED
                 # (32-bit palette, linear)
                 palette = list(struct.unpack(f"<{len(self.palette_data) // 4}I", self.palette_data))
-
-        # Convert PS2 alpha (0x0-0x80) to 0x0-0xFF
-        for i in range(len(palette)):
-            a = palette[i] >> 24
-            a = min(a * 2, 0xFF)
-            palette[i] |= a << 24
         
         return palette
 

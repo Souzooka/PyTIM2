@@ -278,7 +278,12 @@ class TIM2Image:
             case TIM2ImageType.TIM2_RGB32:
                 image = list(struct.unpack(f"<{len(self.image_data)}B", self.image_data))
             case TIM2ImageType.TIM2_IDTEX4:
-                raise NotImplementedError()
+                for byte in self.image_data:
+                    indices = [byte & 0xF, byte >> 4]
+                    for index in indices:
+                        for i in range(4):
+                            color = (palette[index] >> (i * 8)) & 0xFF
+                            image.append(color)
             case TIM2ImageType.TIM2_IDTEX8:
                 for index in self.image_data:
                     for i in range(4):
@@ -286,6 +291,30 @@ class TIM2Image:
                         image.append(color)
         
         return image
+    
+    def __unswizzle_palette32(self) -> list[int]:
+        palette = list(struct.unpack(f"<{len(self.palette_data) // 4}I", self.palette_data))
+
+        if self.header.image_type is TIM2ImageType.TIM2_IDTEX4:
+            # The palette is effectively already linear
+            return palette
+
+        new_palette: list[int] = []
+
+        for i in range(len(palette)):
+            top = (i & 0x8) == 0
+            left = (i & 0x10) == 0
+
+            if top and left:
+                new_palette.append(palette[i])
+            elif not top and left:
+                new_palette.append(palette[i + 8])
+            elif top and not left:
+                new_palette.append(palette[i - 8])
+            else:
+                new_palette.append(palette[i])
+        
+        return new_palette
 
     def __get_normalized_palette(self) -> list[int]:
         """
@@ -320,7 +349,7 @@ class TIM2Image:
                 # (32-bit palette, swizzled)
                 #raise NotImplementedError()
                 # TEST pending implementation
-                palette = list(struct.unpack(f"<{len(self.palette_data) // 4}I", self.palette_data))
+                palette = self.__unswizzle_palette32()
             case TIM2PaletteType.PAL_RGB16_CSM2:
                 # (16-bit palette, linear)
                 palette = [convert16_to_32(color) for color in struct.unpack(f"<{len(self.palette_data) // 2}H", self.palette_data)]

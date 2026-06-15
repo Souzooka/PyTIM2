@@ -126,7 +126,6 @@ class TIM2ImageHeader:
 
     @classmethod
     def from_file(cls, f: BinaryIO):
-        # TODO
         pos = f.tell()
 
         header = cls()
@@ -266,7 +265,7 @@ class TIM2Image:
 
         assert actual == expected, f"Palette size mismatch (expected bytes={expected}, actual bytes={actual})"
 
-    def get_normalized_image(self) -> list[int]:
+    def get_normalized_image(self, is_swizzled: bool = False) -> list[int]:
         image: list[int] = []
         palette = self.__get_normalized_palette()
 
@@ -300,7 +299,10 @@ class TIM2Image:
                             color = (palette[index] >> (i * 8)) & 0xFF
                             image.append(color)
             case TIM2ImageType.TIM2_IDTEX8:
-                for index in self.image_data:
+                linear_image = list(self.image_data)
+                if is_swizzled:
+                    linear_image = self.__unswizzle_imagePSMT8()
+                for index in linear_image:
                     for i in range(4):
                         color = (palette[index] >> (i * 8)) & 0xFF
                         image.append(color)
@@ -312,6 +314,62 @@ class TIM2Image:
             image[i] = a
 
         return image
+    
+    def __unswizzle_imagePSMT8(self) -> list[int]:
+        # TODO: This needs to be cleaned up/refactored a bit so it's not as dirty,
+        # but it appears to work as is right now so I'm just committing it as is
+        # to avoid breaking it.
+        image = self.image_data
+
+        # We need to convert the original 8-bit image to a 32-bit image of half size
+        # to work upon it (e.g. 8-bit 64x64 -> 32-bit 32x32) because the way pixels are
+        # laid out in the 32-bit image are going to be different than they are in the 8-bit image.
+        # (e.g. in the 32-bit format, which we're unpacking to 8-bit, (x=16,y=0) would actually be (x=0,y=1)
+        # in the 8-bit format as the 16th 32-bit pixel starts with the 64th bit.)
+        image32 = list(struct.unpack(f"<{len(self.image_data) // 4}I", self.image_data))
+        width = self.width // 2
+        height = self.height // 2
+
+        new_image: list[int] = [0] * len(image)
+
+        even_layout = [
+            0, 9, 2, 11,
+            1, 8, 3, 10,
+            4, 13, 6, 15,
+            5, 12, 7, 14,
+        ]
+        odd_layout = [
+            1, 8, 3, 10,
+            0, 9, 2, 11,
+            5, 12, 7, 14,
+            4, 13, 6, 15,
+        ]
+
+        def get_pixel(column: int, i: int) -> int:
+            layout = odd_layout if column & 1 else even_layout
+
+            layout_idx = (i % 4) + ((i // 16) * 4)
+            offset = (layout[layout_idx] * 4) + ((i % 16) // 4)
+
+            return offset
+        
+        for column in range(len(new_image) // 64):
+            scx, scy = (column * 2) // height * 8, (column * 2) % height
+            dcx, dcy = (column * 4) // self.height * 16, (column * 4) % self.height
+            for i in range(64):
+                x, y = scx + (i // 4) % 8, scy + i // 32
+                src_pixel_idx = y * width + x
+                src_pixel = image32[src_pixel_idx]
+                src_pixel = (src_pixel >> (i % 4) * 8) & 0xFF
+                column_idx = get_pixel(column, i)
+                dx, dy = column_idx % 16, column_idx // 16
+                dest_pixel = self.__calc_index(dcx + dx, dcy + dy)
+                new_image[dest_pixel] = src_pixel
+
+        return new_image
+    
+    def __calc_index(self, x: int, y: int) -> int:
+        return y * self.width + x
     
     def __unswizzle_palette32(self) -> list[int]:
         palette = list(struct.unpack(f"<{len(self.palette_data) // 4}I", self.palette_data))

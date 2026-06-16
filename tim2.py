@@ -316,34 +316,45 @@ class TIM2Image:
         return image
     
     def __unswizzle_imagePSMT8(self) -> list[int]:
-        # TODO: This needs to be cleaned up/refactored a bit so it's not as dirty,
-        # but it appears to work as is right now so I'm just committing it as is
-        # to avoid breaking it.
         image = self.image_data
 
         # We need to convert the original 8-bit image to a 32-bit image of half size
         # to work upon it (e.g. 8-bit 64x64 -> 32-bit 32x32) because the way pixels are
         # laid out in the 32-bit image are going to be different than they are in the 8-bit image.
         # (e.g. in the 32-bit format, which we're unpacking to 8-bit, (x=16,y=0) would actually be (x=0,y=1)
-        # in the 8-bit format as the 16th 32-bit pixel starts with the 64th bit.)
+        # in the 8-bit format as the 16th 32-bit pixel starts with the 64th byte.)
         image32 = list(struct.unpack(f"<{len(self.image_data) // 4}I", self.image_data))
         width = self.width // 2
         height = self.height // 2
 
         new_image: list[int] = [0] * len(image)
 
+        # In the 32-bit image, for a 8x2 column which looks like this:
+        #
+        # A B C D E F G H
+        # I J K L M N O P
+        #
+        # the 64-bit 8-bit values are laid out as such, for the first four pixels:
+        #    bit0...        ...bit32
+        # A: 0  | 36 | 8  | 44
+        # B: 1  | 37 | 9  | 45
+        # C: 2  | 38 | 10 | 46
+        # D: 3  | 39 | 11 | 47
+        # And this pattern of 4 sequential indices being in the same byte of a 32-bit value
+        # continues for the rest of the pixels. We can use a lookup table here to determine
+        # the starting bit // 4 for each of those 4 pixel chunks.
+        # The even layout is used for columns 0, 2, ..., while the odd layout is used for
+        # colums 1, 3, .... The two layouts are rather similar, but the odd layout is laid
+        # out such that we can just flip the lookup value's least significant bit to replicate it.
+        # (for example, for an odd column, 8-bit pixels 4, 5, 6, and 7 are located within the first
+        # byte of the 32-bit pixels A, B, C, and D).
         even_layout = [
             0, 9, 2, 11,
             1, 8, 3, 10,
             4, 13, 6, 15,
             5, 12, 7, 14,
         ]
-        odd_layout = [
-            1, 8, 3, 10,
-            0, 9, 2, 11,
-            5, 12, 7, 14,
-            4, 13, 6, 15,
-        ]
+        odd_layout = [i ^ 1 for i in even_layout]
 
         def get_pixel(column: int, i: int) -> int:
             layout = odd_layout if column & 1 else even_layout
@@ -353,14 +364,28 @@ class TIM2Image:
 
             return offset
         
+        # NOTE: Columns vary by size per image type (it's 64-bytes of data)
+        # but always start at the top left of the image, and then travel downwards.
+        # If the top left of an 8-bit 32x16 image is (x=0, y=0), then the first column
+        # is at (0,0), then (0,4), then (0,8), then (0, 12), then (4, 0), and so on.
         for column in range(len(new_image) // 64):
+            # These are the coordinates for the top left of a 8x2 column
+            # for the 32-bit representation for the texture
             scx, scy = (column * 2) // height * 8, (column * 2) % height
+            # These are the coordinates for the top left of a 16x4 column
+            # for the 8-bit representation for the texture
             dcx, dcy = (column * 4) // self.height * 16, (column * 4) % self.height
             for i in range(64):
+                # Extract a byte from the 32-bit image which will
+                # replace a pixel in the 8-bit image. These bytes
+                # are extracted sequentially out of the 32-bit
+                # column as the loop iterates.
                 x, y = scx + (i // 4) % 8, scy + i // 32
                 src_pixel_idx = y * width + x
                 src_pixel = image32[src_pixel_idx]
                 src_pixel = (src_pixel >> (i % 4) * 8) & 0xFF
+
+                # Determine the position of the 8-bit pixel to replace.
                 column_idx = get_pixel(column, i)
                 dx, dy = column_idx % 16, column_idx // 16
                 dest_pixel = self.__calc_index(dcx + dx, dcy + dy)

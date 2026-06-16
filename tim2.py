@@ -292,7 +292,10 @@ class TIM2Image:
                 # UNTESTED
                 image = list(struct.unpack(f"<{len(self.image_data)}B", self.image_data))
             case TIM2ImageType.TIM2_IDTEX4:
-                for byte in self.image_data:
+                linear_image = list(self.image_data)
+                if is_swizzled:
+                    linear_image = self.__unswizzle_imagePSMT4()
+                for byte in linear_image:
                     indices = [byte & 0xF, byte >> 4]
                     for index in indices:
                         for i in range(4):
@@ -393,8 +396,84 @@ class TIM2Image:
 
         return new_image
     
+    def __unswizzle_imagePSMT4(self) -> list[int]:
+        image = self.image_data
+
+        image32 = list(struct.unpack(f"<{len(self.image_data) // 4}I", self.image_data))
+        width = self.width // 2
+        height = self.height // 4
+
+        new_image: list[int] = [0] * len(image)
+
+        even_layout = [
+            0 , 17, 2 , 19, 4 , 21, 6 , 23,
+            1 , 16, 3 , 18, 5 , 20, 7 , 22,
+            8 , 25, 10, 27, 12, 29, 14, 31,
+            9 , 24, 11, 26, 13, 28, 15, 30,
+        ]
+        odd_layout = [i ^ 1 for i in even_layout]
+
+        def get_pixel(column: int, i: int) -> int:
+            layout = odd_layout if column & 1 else even_layout
+
+            layout_idx = (i % 8) + ((i // 32) * 8)
+            offset = (layout[layout_idx] * 4) + ((i % 32) // 8)
+
+            return offset
+        
+        for column in range(len(new_image) // 64):
+            scx, scy = (column * 2) // height * 8, (column * 2) % height
+            dcx, dcy = (column * 4) // self.height * 32, (column * 4) % self.height
+            for i in range(128):
+                # Extract a nibble from the 32-bit image which will
+                # replace a pixel in the 4-bit image. These bytes
+                # are extracted sequentially out of the 32-bit
+                # column as the loop iterates.
+                x, y = scx + (i // 8) % 8, scy + i // 64
+                src_pixel_idx = y * width + x
+                src_pixel = image32[src_pixel_idx]
+                shift = (i % 8) * 4
+                src_pixel = ((src_pixel & (0xF << shift)) >> shift) & 0xF
+
+                # Determine the position of the 4-bit pixel to replace.
+                column_idx = get_pixel(column, i)
+                dx, dy = column_idx % 32, column_idx // 32
+                dest_pixel = self.__calc_index4(dcx + dx, dcy + dy)
+
+                pixel = new_image[dest_pixel]
+                if column_idx & 1 == 0:
+                    new_image[dest_pixel] = (pixel & 0xF0) | src_pixel
+                else:
+                    new_image[dest_pixel] = (pixel & 0x0F) | (src_pixel << 4)
+
+        # TODO: 
+        # Now, the image is properly deswizzled, BUT, the image as is consists of
+        # 32x16 pixel blocks which are ordered incorrectly. 
+        # For example, consider we have a 64x64 texture.
+        # The blocks should be laid out left to right as such:
+        #
+        # 0 1
+        # 2 3
+        # 4 5
+        # 6 7
+        #
+        # However, the blocks are actually laid out as such:
+        #
+        # 0 4
+        # 1 5
+        # 2 6
+        # 3 7
+        #
+        # Therefore, we need to transform the image again in order
+        # to rotate these blocks around.
+
+        return new_image
+    
     def __calc_index(self, x: int, y: int) -> int:
         return y * self.width + x
+    
+    def __calc_index4(self, x: int, y: int) -> int:
+        return y * (self.width // 2) + (x // 2)
     
     def __unswizzle_palette32(self) -> list[int]:
         palette = list(struct.unpack(f"<{len(self.palette_data) // 4}I", self.palette_data))

@@ -446,7 +446,6 @@ class TIM2Image:
                 else:
                     new_image[dest_pixel] = (pixel & 0x0F) | (src_pixel << 4)
 
-        # TODO: 
         # Now, the image is properly deswizzled, BUT, the image as is consists of
         # 32x16 pixel blocks which are ordered incorrectly. 
         # For example, consider we have a 64x64 texture.
@@ -467,7 +466,25 @@ class TIM2Image:
         # Therefore, we need to transform the image again in order
         # to rotate these blocks around.
 
-        return new_image
+        rotated_image = [0] * len(new_image)
+
+        for scx in range(0, self.width//2, 16):
+            for scy in range(0, self.height, 16):
+                block_id = scy // 16 + ((scx // 16) * self.height // 16)
+                d = block_id * 16
+                dcx = d % (self.width//2)
+                dcy = (d // (self.width//2)) * 16
+                for y in range(16):
+                    for x in range(16):
+                        sx = scx + x
+                        sy = scy + y
+                        dx = dcx + x
+                        dy = dcy + y
+                        src_index = (sy * (self.width // 2)) + sx
+                        dst_index = (dy * (self.width // 2)) + dx
+                        rotated_image[dst_index] = new_image[src_index]
+
+        return rotated_image
     
     def __calc_index(self, x: int, y: int) -> int:
         return y * self.width + x
